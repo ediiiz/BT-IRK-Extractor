@@ -1,196 +1,155 @@
-```powershell
-# BT-IRK-Extractor.ps1
-# A self-contained script to extract Bluetooth IRK keys from the registry.
-# Requires Administrator privileges.
+<#
+.SYNOPSIS
+    BT-IRK-Extractor - Extracts Bluetooth Identity Resolving Keys (IRKs) from Windows registry
+.DESCRIPTION
+    This script extracts Bluetooth IRK values for paired devices by accessing the Windows registry
+    with SYSTEM privileges using PsExec. It helps retrieve encryption keys necessary for spoofing
+    Bluetooth Low Energy (BLE) devices.
+.NOTES
+    Author: Ediiiz
+    Version: 1.0
+    GitHub: https://github.com/ediiiz/BT-IRK-Extractor
+#>
 
-# Check for Administrator privileges
-$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if ( -not $isAdmin ) {
-  Write-Host "This script requires Administrator privileges. Please run PowerShell as Administrator." -ForegroundColor Red
+function Show-Banner {
+  Write-Host "`n============================================================" -ForegroundColor Cyan
+  Write-Host "             Bluetooth IRK Extractor Tool                   " -ForegroundColor Cyan
+  Write-Host "============================================================" -ForegroundColor Cyan
+  Write-Host "Extracts Identity Resolving Keys (IRKs) for BLE devices" -ForegroundColor Yellow
+  Write-Host "https://github.com/ediiiz/BT-IRK-Extractor" -ForegroundColor Yellow
+  Write-Host "============================================================`n" -ForegroundColor Cyan
+}
+
+function Test-Admin {
+  $currentUser = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+  return $currentUser.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Get-PsExec {
+  $psExecPath = "$env:TEMP\PsExec.exe"
+  $psExecUrl = "https://live.sysinternals.com/PsExec.exe"
+  
+  Write-Host "Downloading PsExec..." -ForegroundColor Yellow
+  try {
+    Invoke-WebRequest -Uri $psExecUrl -OutFile $psExecPath -ErrorAction Stop
+    Write-Host "PsExec downloaded successfully!" -ForegroundColor Green
+    return $psExecPath
+  }
+  catch {
+    Write-Host "Failed to download PsExec: $_" -ForegroundColor Red
+    return $null
+  }
+}
+
+function Get-BluetoothIRKs {
+  param (
+    [string]$PsExecPath
+  )
+
+  Write-Host "Creating temporary registry export script..." -ForegroundColor Yellow
+  $tempScriptPath = "$env:TEMP\ExportBTRegistry.ps1"
+  $regExportPath = "$env:TEMP\BTKeys.reg"
+
+  $exportScript = @"
+`$regPath = 'HKLM\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Keys'
+reg export `$regPath "$regExportPath" /y
+"@
+
+  Set-Content -Path $tempScriptPath -Value $exportScript
+
+  Write-Host "Launching PsExec to access registry with SYSTEM privileges..." -ForegroundColor Yellow
+  try {
+    Start-Process -FilePath $PsExecPath -ArgumentList "-i -s -accepteula powershell -ExecutionPolicy Bypass -File `"$tempScriptPath`"" -Wait -NoNewWindow
+  }
+  catch {
+    Write-Host "Error executing PsExec: $_" -ForegroundColor Red
+    return
+  }
+
+  if (-not (Test-Path $regExportPath)) {
+    Write-Host "Registry export failed - file not created." -ForegroundColor Red
+    return
+  }
+
+  Write-Host "Processing exported registry data..." -ForegroundColor Yellow
+  $regContent = Get-Content -Path $regExportPath -Raw
+
+  # Define regex patterns to find Bluetooth adapters and their paired devices
+  $adapterPattern = '^\[HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\BTHPORT\\Parameters\\Keys\\([a-fA-F0-9]+)\]'
+  $devicePattern = '^\[HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\BTHPORT\\Parameters\\Keys\\[a-fA-F0-9]+\\([a-fA-F0-9]+)\]'
+  $irkPattern = '"IRK"=hex:([a-fA-F0-9,]+)'
+
+  $adapters = [regex]::Matches($regContent, $adapterPattern, [System.Text.RegularExpressions.RegexOptions]::Multiline) | 
+  ForEach-Object { $_.Groups[1].Value }
+  
+  Write-Host "`nFound Bluetooth adapter(s):" -ForegroundColor Green
+  foreach ($adapter in $adapters) {
+    Write-Host " - $adapter" -ForegroundColor Cyan
+  }
+  
+  $results = @()
+  
+  foreach ($adapter in $adapters) {
+    Write-Host "`nPaired devices for adapter $adapter":"" -ForegroundColor Green
+      
+    $deviceSectionPattern = "^\[HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\BTHPORT\\Parameters\\Keys\\$adapter\\([a-fA-F0-9]+)\]"
+    $devices = [regex]::Matches($regContent, $deviceSectionPattern, [System.Text.RegularExpressions.RegexOptions]::Multiline) | 
+    ForEach-Object { $_.Groups[1].Value }
+      
+    foreach ($device in $devices) {
+      $deviceSection = [regex]::Match($regContent, "(?s)\[HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\BTHPORT\\Parameters\\Keys\\$adapter\\$device\].*?(?=\[|$)").Value
+      $irkMatch = [regex]::Match($deviceSection, $irkPattern)
+          
+      if ($irkMatch.Success) {
+        $irkHex = $irkMatch.Groups[1].Value -replace ',', ''
+        $name = [regex]::Match($deviceSection, '"(LTK|STK|Name|IRK|CSRK|ERand|Identity)"="([^"]+)"').Groups[2].Value
+              
+        $deviceInfo = [PSCustomObject]@{
+          AdapterMAC = $adapter -replace '(.{2})(?=.)', '$1:'
+          DeviceMAC  = $device -replace '(.{2})(?=.)', '$1:'
+          DeviceName = $name
+          IRK        = $irkHex
+        }
+              
+        $results += $deviceInfo
+              
+        Write-Host "  Device: $device" -ForegroundColor White
+        if ($name) { Write-Host "  Name: $name" -ForegroundColor White }
+        Write-Host "  IRK: $irkHex" -ForegroundColor Magenta
+        Write-Host ""
+      }
+    }
+  }
+  
+  # Export results to CSV
+  if ($results.Count -gt 0) {
+    $csvPath = "$env:USERPROFILE\Desktop\BluetoothIRKs.csv"
+    $results | Export-Csv -Path $csvPath -NoTypeInformation
+    Write-Host "Results exported to: $csvPath" -ForegroundColor Green
+  }
+  
+  # Cleanup
+  Write-Host "Cleaning up temporary files..." -ForegroundColor Yellow
+  Remove-Item -Path $tempScriptPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -Path $regExportPath -Force -ErrorAction SilentlyContinue
+}
+
+# Main execution
+Show-Banner
+
+if (-not (Test-Admin)) {
+  Write-Host "This script requires administrator privileges. Please run as administrator." -ForegroundColor Red
   exit
 }
 
-# Set up working directory (in TEMP)
-$workingDir = "$env:TEMP\BTIRKExtract"
-if ( -not (Test-Path -Path $workingDir)) {
-  New-Item -Path $workingDir -ItemType Directory -Force | Out-Null
-}
-Write-Host "Working directory: $workingDir" -ForegroundColor Cyan
-
-# Define file paths
-$psExecPath = "$workingDir\PsExec64.exe"
-$regExportPath = "$workingDir\BTKeys.reg"
-$outputJsonPath = "$workingDir\irk_results.json"
-$systemScriptPath = "$workingDir\system_command.ps1"
-
-# Download PsExec if needed
-if ( -not (Test-Path -Path $psExecPath) ) {
-  Write-Host "Downloading PsExec64.exe..." -ForegroundColor Yellow
-  $psExecUrl = "https://download.sysinternals.com/files/PSTools.zip"
-  $zipPath = "$workingDir\PSTools.zip"
-    
-  # Download the PSTools zip file
-  Invoke-WebRequest -Uri $psExecUrl -OutFile $zipPath -UseBasicParsing
-
-  # Extract PsExec64.exe from the zip file
-  Add-Type -AssemblyName System.IO.Compression.FileSystem
-  $zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
-  $entry = $zip.Entries | Where-Object { $_.Name -eq "PsExec64.exe" }
-  [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $psExecPath, $true)
-  $zip.Dispose()
-    
-  # Clean up the zip file
-  Remove-Item -Path $zipPath -Force
-  Write-Host "PsExec64.exe downloaded successfully to $psExecPath" -ForegroundColor Green
-}
-
-# Create a template for the system script that will run as SYSTEM.
-# We use a single-quoted here-string to avoid unwanted interpolation.
-# (Placeholders {{REG_EXPORT_PATH}} and {{OUTPUT_JSON_PATH}} will be replaced below.)
-$systemScriptTemplate = @'
-# Extraction script running as SYSTEM
-$regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Keys"
-$regExportPath = "{{REG_EXPORT_PATH}}"
-$outputJsonPath = "{{OUTPUT_JSON_PATH}}"
-$deviceData = @()
-
-function Get-BTDeviceName {
-    param (
-        [string]$deviceMac
-    )
-    # Try standard Bluetooth registry locations
-    $possiblePaths = @(
-        "HKLM:\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Devices\$deviceMac",
-        "HKLM:\SYSTEM\CurrentControlSet\Services\BTH\Parameters\Devices\$deviceMac"
-    )
-    foreach ($path in $possiblePaths) {
-        if (Test-Path $path) {
-            $nameValue = Get-ItemProperty -Path $path -Name "Name" -ErrorAction SilentlyContinue
-            if ($nameValue -and $nameValue.Name) {
-                return $nameValue.Name
-            }
-        }
-    }
-    # Try to get from device manager friendly names
-    $deviceClasses = Get-ChildItem "HKLM:\SYSTEM\CurrentControlSet\Enum" -ErrorAction SilentlyContinue
-    foreach ($class in $deviceClasses) {
-        $devices = Get-ChildItem $class.PSPath -ErrorAction SilentlyContinue
-        foreach ($device in $devices) {
-            $properties = Get-ItemProperty $device.PSPath -ErrorAction SilentlyContinue
-            if ($properties.FriendlyName -and $properties.HardwareID) {
-                $hwId = $properties.HardwareID | Where-Object { $_ -match $deviceMac }
-                if ($hwId) {
-                    return $properties.FriendlyName
-                }
-            }
-        }
-    }
-    return "Unknown Device"
-}
-
-if (Test-Path -Path $regPath) {
-    $adapterKeys = Get-ChildItem -Path $regPath
-    if ($adapterKeys.Count -gt 0) {
-        foreach ($adapter in $adapterKeys) {
-            $deviceKeys = Get-ChildItem -Path $adapter.PSPath
-            if ($deviceKeys.Count -gt 0) {
-                foreach ($device in $deviceKeys) {
-                    $deviceMac = $device.PSChildName
-                    $deviceName = Get-BTDeviceName -deviceMac $deviceMac
-
-                    # Export registry key for this device
-                    $exportCmd = "reg export `"$($device.PSPath.Replace('Microsoft.PowerShell.Core\Registry::',''))`" `"$regExportPath`" /y"
-                    cmd /c $exportCmd | Out-Null
-
-                    # Read exported .reg file and extract the IRK value
-                    $content = Get-Content -Path $regExportPath -Raw
-                    if ($content -match 'IRK"=hex:([0-9a-f,]+)') {
-                        $irkWithCommas = $matches[1]
-                        $irk = $irkWithCommas -replace ',', ''
-                        $deviceObj = [PSCustomObject]@{
-                            DeviceName = $deviceName
-                            DeviceMAC  = $deviceMac
-                            AdapterMAC = $adapter.PSChildName
-                            IRK        = $irk
-                        }
-                        $deviceData += $deviceObj
-                    }
-                }
-            }
-        }
-        if ($deviceData.Count -gt 0) {
-            $deviceData | ConvertTo-Json | Out-File -FilePath $outputJsonPath -Force
-        }
-    }
-}
-'@
-
-# Replace placeholders with the actual paths.
-# Note: Use the -replace operator (no formatting needed).
-$systemScript = $systemScriptTemplate -replace "\{\{REG_EXPORT_PATH\}\}", $regExportPath `
-  -replace "\{\{OUTPUT_JSON_PATH\}\}", $outputJsonPath
-
-# Write the final system script to a file
-Set-Content -Path $systemScriptPath -Value $systemScript -Force
-Write-Host "System script written to: $systemScriptPath" -ForegroundColor Cyan
-
-# Execute the system script as SYSTEM using PsExec
-Write-Host "Extracting Bluetooth IRK keys (please wait)..." -ForegroundColor Yellow
-$psExecArgs = "-accepteula -i -s powershell.exe -ExecutionPolicy Bypass -File `"$systemScriptPath`""
-Start-Process -FilePath $psExecPath -ArgumentList $psExecArgs -Wait -NoNewWindow
-
-# Allow a short pause for the extraction to complete
-Start-Sleep -Seconds 2
-
-# Read and display the results
-if (Test-Path $outputJsonPath) {
-  try {
-    $irkData = Get-Content -Path $outputJsonPath -Raw | ConvertFrom-Json
-
-    if ($irkData -and $irkData.Count -gt 0) {
-      # Group by adapter for display
-      $adapterGroups = $irkData | Group-Object -Property AdapterMAC
-
-      Write-Host "`nBluetooth IRK Keys:" -ForegroundColor Cyan
-      Write-Host "=================" -ForegroundColor Cyan
-
-      foreach ($adapterGroup in $adapterGroups) {
-        Write-Host "`nBluetooth Adapter: $($adapterGroup.Name)" -ForegroundColor Cyan
-        Write-Host "----------------------------------------" -ForegroundColor Cyan
-
-        foreach ($device in $adapterGroup.Group) {
-          Write-Host "Device: $($device.DeviceName) [$($device.DeviceMAC)]" -ForegroundColor Yellow
-          Write-Host "IRK: $($device.IRK)" -ForegroundColor Green
-          Write-Host ""
-        }
-      }
-
-      # (Optional) Save results to Desktop if desired.
-      $userInput = Read-Host "Do you want to save these results to the desktop? (y/n)"
-      if ($userInput.ToLower() -eq 'y') {
-        $desktopPath = [Environment]::GetFolderPath("Desktop")
-        $outputCsv = "$desktopPath\BluetoothIRK_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
-        $irkData | Export-Csv -Path $outputCsv -NoTypeInformation
-        Write-Host "Results saved to: $outputCsv" -ForegroundColor Green
-      }
-    }
-    else {
-      Write-Host "No Bluetooth devices with IRK keys were found." -ForegroundColor Yellow
-    }
-  }
-  catch {
-    Write-Host "Error processing results: $_" -ForegroundColor Red
-    Write-Host "No Bluetooth devices with IRK keys were found." -ForegroundColor Yellow
-  }
-  # Clean up the results JSON
-  Remove-Item -Path $outputJsonPath -Force -ErrorAction SilentlyContinue
+$psExecPath = Get-PsExec
+if ($psExecPath) {
+  Get-BluetoothIRKs -PsExecPath $psExecPath
 }
 else {
-  Write-Host "No Bluetooth devices with IRK keys were found." -ForegroundColor Yellow
+  Write-Host "Cannot continue without PsExec. Exiting." -ForegroundColor Red
+  exit
 }
 
-Write-Host "`nBluetooth IRK extraction complete." -ForegroundColor Green
-
-# Optionally, clean up temporary files (except PsExec64.exe)
-Remove-Item -Path $regExportPath, $systemScriptPath -Force -ErrorAction SilentlyContinue
-```
+Write-Host "`nBluetooth IRK extraction complete!" -ForegroundColor Green
+Write-Host "Use these IRK values for your Bluetooth security testing." -ForegroundColor Yellow
