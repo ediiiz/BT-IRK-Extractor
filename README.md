@@ -1,14 +1,14 @@
 # Bluetooth IRK Extractor for Windows
 
-Extract Bluetooth Identity Resolving Keys (IRK) from Windows devices with a simple PowerShell script. This tool helps retrieve the IRK keys needed for advanced Bluetooth debugging, security research, or custom implementations.
+Extract Bluetooth Identity Resolving Keys (IRK) from Windows devices with a simple PowerShell script.
 
 ## Quick Usage
 
-Run this command in PowerShell (as Administrator) to instantly extract IRK keys from all paired Bluetooth devices:
+Run this command in PowerShell (as Administrator):
 
 ```powershell
-# One-line command - run and forget
-irm https://raw.githubusercontent.com/ediiiz/BT-IRK-Extractor/main/BTIRKExtractor.ps1 | iex; Get-BTIRKOnce
+# One-line command - run instantly
+irm https://raw.githubusercontent.com/ediiiz/BT-IRK-Extractor/main/BT-IRK-Extractor.ps1 | iex
 ```
 
 ## What It Does
@@ -18,36 +18,7 @@ This tool:
 - Identifies all paired Bluetooth devices and their associated adapters
 - Provides device names when available
 - Formats the output in a clean, easy-to-read table
-- Automatically handles SYSTEM-level access requirements
-
-## Installation Options
-
-### Temporary Use (Recommended)
-
-This method runs the tool without permanent installation:
-
-```powershell
-# Load the tool
-irm https://raw.githubusercontent.com/ediiiz/BT-IRK-Extractor/main/BTIRKExtractor.ps1 | iex
-
-# Extract the keys
-Get-BTIRKOnce
-```
-
-### Permanent Installation
-
-If you need the tool available in all PowerShell sessions:
-
-```powershell
-# Load the loader script
-irm https://raw.githubusercontent.com/ediiiz/BT-IRK-Extractor/main/BTIRKExtractor.ps1 | iex
-
-# Install the module permanently
-Install-BTIRKExtractor
-
-# After installation, you can use it in any new PowerShell session
-Import-Module BTIRKExtractor
-```
+- Offers an option to save results to your desktop
 
 ## Requirements
 
@@ -56,40 +27,6 @@ Import-Module BTIRKExtractor
 - Administrator privileges
 - Internet connection (for initial download)
 
-## Advanced Usage
-
-After installing the module:
-
-```powershell
-# Import the module
-Import-Module BTIRKExtractor
-
-# Extract keys and save files to disk
-$irkData = Get-BluetoothIRK -SaveFiles
-
-# Display formatted table
-Show-BluetoothIRKTable -IRKData $irkData
-
-# Work with the data programmatically
-$irkData | ForEach-Object {
-    "Device: $($_.DeviceName), MAC: $($_.DeviceMAC), IRK: $($_.IRK)"
-}
-```
-
-## Available Commands
-
-- `Get-BTIRKOnce` - Extract Bluetooth IRK keys without installing the module
-- `Install-BTIRKExtractor` - Install the module permanently
-- `Get-BluetoothIRK` - Extract IRK keys (available after installation)
-- `Show-BluetoothIRKTable` - Display formatted results (available after installation)
-
-## Parameters for Get-BluetoothIRK
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| -SaveFiles | Switch | Save extracted IRK values to disk |
-| -OutputPath | String | Custom path to save extracted files (default: ~\BTIRKExtract) |
-
 ## Troubleshooting
 
 ### Execution Policy Issues
@@ -97,7 +34,7 @@ $irkData | ForEach-Object {
 If you encounter execution policy errors, try this alternative command:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -Command "iex (irm https://raw.githubusercontent.com/ediiiz/BT-IRK-Extractor/main/BTIRKExtractor.ps1); Get-BTIRKOnce"
+powershell -ExecutionPolicy Bypass -Command "& {iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/ediiiz/BT-IRK-Extractor/main/BT-IRK-Extractor.ps1'))}"
 ```
 
 ### Administrator Privileges
@@ -119,11 +56,17 @@ Identity Resolving Keys (IRKs) are cryptographic keys used in Bluetooth Low Ener
 
 MIT License
 
-## Acknowledgments
-
-- Uses Microsoft's PsExec tool from the Sysinternals Suite
-- Based on Bluetooth SIG specifications for BLE privacy
-
 ---
 
 Created by [ediiiz](https://github.com/ediiiz)
+```
+
+This approach should solve the issue by:
+
+1. Making the script completely self-contained (no separate module/loader structure)
+2. Eliminating the `Export-ModuleMember` command that was causing problems
+3. Simplifying the usage to a single command with no additional functions to call
+4. Providing an alternative execution method for users experiencing execution policy issues
+5. Including an option to save results to the desktop at the end of execution
+
+All the user needs to do is run a single command, and the script will handle everything else automatically.
