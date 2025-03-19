@@ -90,7 +90,7 @@ reg export `$regPath "$regExportPath" /y
   $results = @()
   
   foreach ($adapter in $adapters) {
-    Write-Host "`nPaired devices for adapter $adapter":"" -ForegroundColor Green
+    Write-Host "`nPaired devices for adapter ${adapter}:" -ForegroundColor Green
       
     $deviceSectionPattern = "^\[HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\BTHPORT\\Parameters\\Keys\\$adapter\\([a-fA-F0-9]+)\]"
     $devices = [regex]::Matches($regContent, $deviceSectionPattern, [System.Text.RegularExpressions.RegexOptions]::Multiline) | 
