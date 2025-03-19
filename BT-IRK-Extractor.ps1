@@ -102,7 +102,8 @@ reg export `$regPath "$regExportPath" /y
           
       if ($irkMatch.Success) {
         $irkHex = $irkMatch.Groups[1].Value -replace ',', ''
-        $name = [regex]::Match($deviceSection, '"(LTK|STK|Name|IRK|CSRK|ERand|Identity)"="([^"]+)"').Groups[2].Value
+        $nameMatch = [regex]::Match($deviceSection, '"Name"="([^"]+)"')
+        $name = if ($nameMatch.Success) { $nameMatch.Groups[1].Value } else { "Unknown Device" }
               
         $deviceInfo = [PSCustomObject]@{
           AdapterMAC = $adapter -replace '(.{2})(?=.)', '$1:'
@@ -114,24 +115,36 @@ reg export `$regPath "$regExportPath" /y
         $results += $deviceInfo
               
         Write-Host "  Device: $device" -ForegroundColor White
-        if ($name) { Write-Host "  Name: $name" -ForegroundColor White }
+        Write-Host "  Name: $name" -ForegroundColor White
         Write-Host "  IRK: $irkHex" -ForegroundColor Magenta
         Write-Host ""
       }
     }
   }
   
-  # Export results to CSV
+  # Display results in a formatted table
   if ($results.Count -gt 0) {
+    Write-Host "`n============================================================" -ForegroundColor Cyan
+    Write-Host "                    IRK Results Summary                     " -ForegroundColor Cyan
+    Write-Host "============================================================" -ForegroundColor Cyan
+      
+    $results | Format-Table -Property DeviceName, DeviceMAC, IRK -AutoSize
+      
+    # Export results to CSV
     $csvPath = "$env:USERPROFILE\Desktop\BluetoothIRKs.csv"
     $results | Export-Csv -Path $csvPath -NoTypeInformation
     Write-Host "Results exported to: $csvPath" -ForegroundColor Green
+  }
+  else {
+    Write-Host "No Bluetooth devices with IRK keys were found." -ForegroundColor Yellow
   }
   
   # Cleanup
   Write-Host "Cleaning up temporary files..." -ForegroundColor Yellow
   Remove-Item -Path $tempScriptPath -Force -ErrorAction SilentlyContinue
   Remove-Item -Path $regExportPath -Force -ErrorAction SilentlyContinue
+  
+  return $results
 }
 
 # Main execution
@@ -144,7 +157,19 @@ if (-not (Test-Admin)) {
 
 $psExecPath = Get-PsExec
 if ($psExecPath) {
-  Get-BluetoothIRKs -PsExecPath $psExecPath
+  $results = Get-BluetoothIRKs -PsExecPath $psExecPath
+  
+  # Additional summary display
+  if ($results -and $results.Count -gt 0) {
+    Write-Host "`nSummary of extracted IRKs:" -ForegroundColor Green
+    Write-Host "Total devices found: $($results.Count)" -ForegroundColor Yellow
+      
+    # Generate a colorized list of devices
+    foreach ($device in $results) {
+      Write-Host "• $($device.DeviceName)" -ForegroundColor Cyan -NoNewline
+      Write-Host " - MAC: $($device.DeviceMAC)" -ForegroundColor White
+    }
+  }
 }
 else {
   Write-Host "Cannot continue without PsExec. Exiting." -ForegroundColor Red
