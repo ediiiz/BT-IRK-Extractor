@@ -14,7 +14,7 @@ function global:Install-BTIRKExtractor {
   }
     
   # Download module file
-  $moduleUrl = "https://raw.githubusercontent.com/ediiizBT-IRK-Extractor/mainBT-IRK-Extractor.psm1"
+  $moduleUrl = "https://raw.githubusercontent.com/ediiizBT-IRK-Extractor/main/BT-IRK-Extractor.psm1"
   $moduleDestination = "$modulePath\BTIRKExtractor.psm1"
     
   try {
@@ -59,7 +59,7 @@ function global:Get-BTIRKOnce {
   }
     
   # Download module file to temp location
-  $moduleUrl = "https://raw.githubusercontent.com/ediiizBT-IRK-Extractor/mainBT-IRK-Extractor.psm1"
+  $moduleUrl = "https://raw.githubusercontent.com/ediiizBT-IRK-Extractor/main/BT-IRK-Extractor.psm1"
   $tempModulePath = "$tempDir\BTIRKExtractor.psm1"
     
   try {
